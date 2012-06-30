@@ -1,0 +1,219 @@
+\documentclass{article}
+\usepackage{graphicx}
+\usepackage{amssymb}
+\usepackage{amsmath}
+\usepackage{tikz}
+\usepackage{url}
+\usepackage{color}
+
+\linespread{1.4}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{1.9ex plus 0.5ex minus 0.2ex}
+
+\title{Proposal for an Efficient Single Object Allocator}
+
+\author{Dhruv Matani}
+
+\begin{document}
+\maketitle
+
+\clearpage
+
+\tableofcontents
+
+\clearpage
+
+\section{Motivation}
+
+With increasing memory sizes, and increasing difference between the
+size of CPU caches and main memory, improving locality and reducing
+the per-object allocation overhead seems to be a desirable thing.
+
+The C++ memory allocation model allows allocators to take advantage of
+the fact that the type (and hence the size) of the object being
+allocated (and deallocated) is known told to the memory allocator
+run-time by the language itself. Many allocators fail to take
+advantage of this subtle fact.
+
+Containers such as \texttt{list, map, set, etc\ldots{}} are used very
+often, and result in problems such as:
+
+\begin{enumerate}
+
+\item Memory fragmentation since nodes are not necessarily freed in
+  the same order as they are allocated. If an allocator uses free
+  lists to string together objects of the same size, then objects
+  lying on different cache lines and pages tend to get grouped
+  together.
+
+\item High per-object overhead. A linked list node for
+  \texttt{list$<$double$>$} on a 64-bit system occupies $8 \times 3 =
+  24$ bytes. If the allocator overhead is $8$ bytes per object, then
+  we are looking at a $33\%$ overhead, which is pretty high. Some
+  allocators try to alleviate this problem by allocating small objects
+  in \textit{arenas or pages} and rounding off the address of the
+  deallocated memory to the arena or page boundary to determine the
+  metadata related to the memory being deallocated. These allocators
+  have a constant overhead, which is not proportional to the number of
+  objects allocated. However, they suffer from memory
+  fragmentation\footnote{By \textit{memory fragmentation}, I mean the
+    behaviour of the allocator to return memory from different pages
+    even though free memory on the same page is available. Usually,
+    \textit{free-list} based allocators tend to return memory in the
+    order it was deallocated.} since free blocks are usually strung as
+  a linked list.
+
+\end{enumerate}
+
+C++ allocators accept an optional \textit{hint} parameter, which is
+usually ignored by most allocators. If the \textit{hint} parameter is
+set by containers such as \textit{list, map, set, etc\ldots{}}, then
+it could potentially increase the cache usage of the processor if the
+allocator allocates objects near the object at the location of the
+\textit{hint} parameter.
+
+\section{Current state-of-the-practice}
+
+\textit{Note: I have borrowed the term \textbf{state-of-the-practice}
+  from Dr. Michael Bender's presentation on TokuTek}
+
+The current \texttt{bitmap\_allocator} is attractive because:
+
+\begin{enumerate}
+
+\item The per-object overhead is just 1-bit
+
+\item The allocator metadata and the user memory are at separate
+  locations, so updating the allocator metadata never touches memory
+  close to the user memory. Since the bitmaps are very tightly packed
+  together, it means that the allocator's working set is very hot and
+  will hopefully reside in the processor cache.
+
+\end{enumerate}
+
+The current \texttt{bitmap\_allocator} achieves the objectives
+mentioned above except for the following drawbacks:
+
+\begin{enumerate}
+
+\item There is no bound on the worst-case cost of a single allocation
+  request, even though on the average, the running time is
+  $o(\log{n})$ (yes, that's a little-Oh) since the average case is
+  assumed to be a sequence of allocation requests or that there are
+  enough free objects available.
+
+\item The free-list-bitmap comes just before the actual memory, so
+  faulty programs run the risk of corrupting the allocator metadata.
+
+\item The code seems to be unnecessarily complicated and doesn't have
+  a standard data structure backing it when in fact a \textit{Segment
+    Tree} is the perfect data structure for such a use-case. The
+  \textit{Segment Tree} also provides an upper-bound of $\Theta(\log{n})$
+  on the worst-case running time of a single call to the
+  \texttt{allocate()} function.
+
+\end{enumerate}
+
+\section{The Static Segment Tree}
+
+The Static Segment
+Tree\footnote{\url{https://en.wikipedia.org/wiki/Segment_tree}} is a
+data structure commonly used in a geometric setting to do
+\textit{range queries}. It is efficient at performing \textit{range
+  aggregation queries} over a static data set. Fortunately, that is
+all we need it for.
+
+The Segment Tree is a summary data structure that stores data in a
+heap-like tree-ordered fashion, with the root node holding the summary
+information for the complete data set, the left \& right children of
+the root node holding the summary information for the left \& right
+half of the data set, and so on till you reach the leaf nodes, which
+hold information for just a single data item. It is easy to see that
+the space requirements for storing $n$ elements is $2n$, which is an
+$O(n)$ space requirement to store $n$ elements.
+
+For the purposes of the \texttt{bitmap\_allocator}, we shall use a
+segment tree of \textit{bits}, which means that we shall use $2n$ bits
+to summarize $n$ objects (or memory regions) each of which correspond
+to a single object returned by the \texttt{allocate()} function.
+
+\subsection{Locating free objects}
+
+A set bit (\texttt{1}) at an internal node indicates that there exists
+a free object somewhere below this node, whereas a reset bit
+(\texttt{0}) indicates that there is no free object below this
+node. This allows us to quickly determine whether we should go down
+this node in search of a free node or not.
+
+\subsection{Locating a free object close to a given allocated object}
+
+To respect the \textit{hint} parameter that might be passed by the
+caller in the \texttt{allocate()} function, we locate the leaf-node
+that the allocated \texttt{hint} pointer points to and try to work our
+way \textit{up} the tree from there, stopping at a node that has a set
+(\texttt{1}) bit and working our way down from that node using the
+same algorithm as before.
+
+A slightly wasteful of space idea has been shown diagrammatically
+here:\\
+\url{http://bit.ly/dS2lrh}
+
+\section{The Big Picture}
+
+Similar to the older \texttt{bitmap\_allocator}, we use a structure
+that is composed of exponentially increasing sized Segment Trees. The
+structure is composed of Segment Trees that have sizes 16, 32, 64,
+128, 256, etc\ldots{} as the memory allocation requests increase.
+
+A pointer to each such Segment Tree is stored in an array sorted by
+the start address of the memory region that each Segment Tree points
+to. In the worst case, we will have $\Theta(\log{n})$ Segment Trees,
+so doing a linear search on them to find a Segment Tree that has a
+free object is acceptable. This linear search is followed by a lookup
+into the Segment Tree to actually find that object and mark it as
+allocated.
+
+The same strategy is used to locate the Segment Tree to which an
+object to be deallocated belongs. i.e. We just traverse the array of
+Segment Trees and check if the pointer being deallocated lies in the
+active range of the Segment Tree.
+
+\section{Optimizations}
+
+The older \texttt{bitmap\_allocator} was parameterized by
+\textit{type}, and that meant that a separate memory pool was used for
+\texttt{bitmap\_allocator<int>} \&
+\texttt{bitmap\_allocator<float>}. Instead, we can use one more level
+of indirection and create an implementation
+\texttt{bitmap\_allocator\_impl<SIZE>} that is parameterized on the
+size of the object rather than the type of the object. This allows
+multiple objects having a different type, but the same size to share
+the underlying memory pools.
+
+\section{Debugging Aids}
+
+The older \texttt{bitmap\_allocator} was pretty easy to corrupt (as so
+will the new one) since the bitmaps used to locate free objects lies
+just before the user memory. There were no checks performed to verify
+the sanity and integrity of the bitmaps.
+
+The new allocator should have some sort or magic words on the
+boundaries of not just the bitmap, but also the boundaries of the
+memory region that stores user memory. Additionally, a debug mode
+could enable a more computationally intensive parity checksum on the
+bitmap.
+
+\section{Profiling Aids}
+
+In \texttt{Profile Mode}, the \texttt{bitmap\_allocator} should be
+able to provide some information about the locality of the memory
+access patterns. As a first attempt, it could (in each Segment Tree)
+compute the quotient:
+
+$\dfrac{\#\ of\ allocated\ objects}{Total\ \#\ of\ objects\ between\ the\ first\ and\ the\ last\ allocated\ object}$
+
+and determine the \textit{tightness} of the active set. The higher
+this ratio (closer to $1$), the better the performance of the
+application.
+
+\end{document}
