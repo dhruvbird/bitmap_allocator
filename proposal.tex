@@ -75,7 +75,7 @@ allocator allocates objects near the object at the location of the
 \section{Current state-of-the-practice}
 
 \textit{Note: I have borrowed the term \textbf{state-of-the-practice}
-  from Dr. Michael Bender's presentation on TokuTek}
+  from Dr. Michael Bender's presentation on Tokutek}
 
 The current \texttt{bitmap\_allocator} is attractive because:
 
@@ -96,11 +96,11 @@ mentioned above except for the following drawbacks:
 
 \begin{enumerate}
 
-\item There is no bound on the worst-case cost of a single allocation
-  request, even though on the average, the running time is
-  $o(\log{n})$ (yes, that's a little-Oh) since the average case is
-  assumed to be a sequence of allocation requests or that there are
-  enough free objects available.
+\item The bound on the worst-case cost of a single allocation request
+  is $O(n)$. However, on the average, the running time is $o(\log{n})$
+  (yes, that's a little-Oh) since the average case is assumed to be a
+  sequence of allocation requests or that there are enough free
+  objects available.
 
 \item The free-list-bitmap comes just before the actual memory, so
   faulty programs run the risk of corrupting the allocator metadata.
@@ -108,7 +108,7 @@ mentioned above except for the following drawbacks:
 \item The code seems to be unnecessarily complicated and doesn't have
   a standard data structure backing it when in fact a \textit{Segment
     Tree} is the perfect data structure for such a use-case. The
-  \textit{Segment Tree} also provides an upper-bound of $\Theta(\log{n})$
+  \textit{Segment Tree} also provides an upper-bound of $\O(\log{n})$
   on the worst-case running time of a single call to the
   \texttt{allocate()} function.
 
@@ -189,6 +189,32 @@ of indirection and create an implementation
 size of the object rather than the type of the object. This allows
 multiple objects having a different type, but the same size to share
 the underlying memory pools.
+
+We need not incur a cost of $O(\log{n})$ per
+\texttt{allocate/deallocate} request. This is because we can walk the
+tree from the place we last left off. For example, if we start off
+with an initially empty tree, we will go down $\log{n}$ nodes till we
+reach a leaf node, after which we go up just 1 step and cache the
+location of this node. The next time we need to allocate a node, we
+will just visit the right child of this node and walk up 2 steps to
+the grand-parent of the allocated node. This results in an algorithm
+that has a worst-case cost/operation of $O(\log{n})$, but the
+amortized cost/operation is $O(1)$. We notice that we need not update
+the cache location of our node in case of a \texttt{deallocate}
+operation since a \texttt{deallocate} operation only frees nodes up,
+which is okay as far as our optimization is concerned. The cached node
+location is updated only when we allocate nodes.
+
+Another optimization we use is that we cache the most recent Segment
+Tree from which an allocation/deallocation request succeeded in the
+hope that subsequent requests for the same will be satisfied by the
+same Segment Tree. This may not always be true, but works well for
+many practical workloads.
+
+All these optimizations greatly reduce the constants and asymptotic
+complexity of each operation, and improve the performance of the
+allocator.
+
 
 \section{Debugging Aids}
 
