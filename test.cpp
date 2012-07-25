@@ -32,7 +32,7 @@ void test_list(int n) {
     for (int i = 0; i < n; ++i) {
         il.push_back(numbers[i]);
     }
-    fprintf(stderr, "Allocated %d objects\n", n);
+    fprintf(stderr, "%d, ", n);
     il.sort();
 }
 
@@ -46,7 +46,7 @@ void test_alloc(int n) {
     for (int i = 0; i < n-1; ++i) {
         vpi.push_back(ia.allocate(1));
     }
-    fprintf(stderr, "Allocated %d objects\n", n-1);
+    fprintf(stderr, "%d, ", n-1);
     vpi.push_back(ia.allocate(1));
 
     for (int i = 0; i < n; ++i) {
@@ -64,6 +64,7 @@ main(int argc, char *argv[]) {
         numbers.push_back(rand());
     }
 
+    fprintf(stderr, "Allocated ");
     for (int i = 0; i < 24; ++i) {
 #if defined TEST_ALLOC
 	test_alloc(1<<i);
@@ -71,6 +72,7 @@ main(int argc, char *argv[]) {
 	test_list(1<<i);
 #endif
     }
+    fprintf(stderr, "objects\n");
     std::string command = "ps aux | grep ";
     command += argv[0];
     int ret = system(command.c_str());
