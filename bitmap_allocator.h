@@ -6,16 +6,22 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if !defined NDEBUG
 #define assert_lt(X,Y) if (!((X)<(Y))) { fprintf(stderr, "%d < %d FAILED\n", (X), (Y)); assert((X)<(Y)); }
 #define assert_gt(X,Y) if (!((X)>(Y))) { fprintf(stderr, "%d > %d FAILED\n", (X), (Y)); assert((X)>(Y)); }
-// #define assert_le(X,Y) if (!((X)<=(Y))) { fprintf(stderr, "%d <= %d FAILED\n", (X), (Y)); assert((X)<=(Y)); }
-// #define assert_eq(X,Y) if (!((X)==(Y))) { fprintf(stderr, "%d == %d FAILED\n", (X), (Y)); assert((X)==(Y)); }
-// #define assert_ne(X,Y) if (!((X)!=(Y))) { fprintf(stderr, "%d != %d FAILED\n", (X), (Y)); assert((X)!=(Y)); }
-// #define DPRINTF(ARGS...) fprintf(stderr, ARGS);
-// #define assert_lt(X,Y)
-// #define assert_gt(X,Y)
+#define assert_le(X,Y) if (!((X)<=(Y))) { fprintf(stderr, "%d <= %d FAILED\n", (X), (Y)); assert((X)<=(Y)); }
+#define assert_eq(X,Y) if (!((X)==(Y))) { fprintf(stderr, "%d == %d FAILED\n", (X), (Y)); assert((X)==(Y)); }
+#define assert_ne(X,Y) if (!((X)!=(Y))) { fprintf(stderr, "%d != %d FAILED\n", (X), (Y)); assert((X)!=(Y)); }
 
+#else
+#define assert_lt(X,Y)
+#define assert_gt(X,Y)
+#define assert_eq(X,Y)
+#endif
+
+// #define DPRINTF(ARGS...) fprintf(stderr, ARGS);
 #define DPRINTF(ARGS...)
+
 
 namespace __gnu_cxx {
     namespace {
@@ -55,6 +61,9 @@ namespace __gnu_cxx {
             // SIZE that this memory_chunk stores
             size_t _M_size;
             size_t _M_top_magic;
+            size_t _M_idx;
+            size_t _M_offset;
+            size_t _M_range;
 
 	    // For the Segment Tree, a reset(0) bit means that the
 	    // block is free whereas a set(1) bit means that the block
@@ -70,49 +79,73 @@ namespace __gnu_cxx {
 		// DPRINTF("memory_chunk<%u>::allocate_block()\n", SIZE);
 		DPRINTF("_M_size: %u\n", _M_size);
 
-                size_t idx = 0;
-                size_t offset = 0;
-                size_t range = _M_size;
+                if (_M_idx == 0) {
+                    assert_eq(_M_offset, 0);
+                    assert_eq(_M_range, _M_size);
+                }
+
                 size_t *pseg = reinterpret_cast<size_t*>(seg_tree());
-                assert_lt(idx, _M_size);
-		DPRINTF("get_bit_at(%u) = %d\n", idx, get_bit_at(pseg, idx));
-                if (get_bit_at(pseg, idx) != 0) {
+                assert_lt(_M_idx, _M_size);
+		DPRINTF("get_bit_at(%u) = %d\n", _M_idx, get_bit_at(pseg, _M_idx));
+
+                if (_M_idx == 0 && get_bit_at(pseg, _M_idx) != 0) {
                     // There is nothing here.
                     return NULL;
+                } else {
+                    assert(get_bit_at(pseg, _M_idx) == 0);
                 }
-                while (idx < _M_size * 2 - 1) {
+
+                while (_M_idx < _M_size * 2 - 1) {
+                    DPRINTF("foo1\n");
+
                     // We have something free under this node.
-		    size_t left  = idx * 2 + 1;
-                    size_t right = idx * 2 + 2;
-                    range /= 2;
-		    DPRINTF("pseg: %u, idx: %u, left: %u, right: %u\n", *pseg, idx, left, right);
+		    size_t left  = _M_idx * 2 + 1;
+                    size_t right = _M_idx * 2 + 2;
+                    _M_range /= 2;
+		    DPRINTF("pseg: %u, idx: %u, left: %u, right: %u\n", *pseg, _M_idx, left, right);
 
                     if (left < _M_size * 2 - 1 && get_bit_at(pseg, left) == 0) {
-                        idx = left;
+                        _M_idx = left;
                     } else if (right < _M_size * 2 - 1 && get_bit_at(pseg, right) == 0) {
-                        idx = right;
-                        offset += range;
+                        _M_idx = right;
+                        _M_offset += _M_range;
                     } else {
                         // Must be the end of the array.
 
 			// This should never happen since the last
 			// allocation for memory should set all the
 			// bit all the way up to the root.
-			assert_gt(idx, _M_size - 2);
+			assert_gt(_M_idx, _M_size - 2);
+                        assert_eq(_M_range, 0);
+                        _M_range = 1;
 
                         // Set the bit at position 'idx'.
-                        set_bit_at(pseg, idx, 1);
+                        set_bit_at(pseg, _M_idx, 1);
+                        const size_t offset = _M_offset;
 
-                        while (idx != 0) {
-                            const size_t parent = (idx-1) / 2;
+                        while (_M_idx != 0) {
+                            DPRINTF("foo2\n");
+
+                            const size_t parent = (_M_idx - 1) / 2;
                             left  = parent * 2 + 1;
                             right = parent * 2 + 2;
-                            if (idx == left) {
+
+                            if (_M_idx == left) {
+                                // FIXME: Update _M_offset & _M_range
+                                _M_idx = parent;
+                                _M_range *= 2;
+
                                 if (get_bit_at(pseg, right) == 0) {
                                     // Stop setting bits.
                                     break;
                                 }
+
                             } else {
+                                // FIXME: Update _M_offset & _M_range
+                                _M_idx = parent;
+                                _M_offset -= _M_range;
+                                _M_range *= 2;
+
                                 if (get_bit_at(pseg, left) == 0) {
                                     // Stop setting bits.
                                     break;
@@ -123,7 +156,6 @@ namespace __gnu_cxx {
                             // 'parent' is completely allocated, with
                             // no free blocks.
                             set_bit_at(pseg, parent, 1);
-                            idx = parent;
                         }
                         return mem() + SIZE * offset;
                     }
@@ -152,6 +184,8 @@ namespace __gnu_cxx {
                 // be reset to 0 to indicate that there is a free node
                 // below this node.
                 while (idx != 0) {
+                    DPRINTF("foo3\n");
+
                     const size_t parent = (idx-1) / 2;
                     if (get_bit_at(pseg, parent) == 0) {
                         break;
@@ -174,7 +208,10 @@ namespace __gnu_cxx {
             }
 
             memory_chunk<SIZE>& set_size(size_t size) {
+                _M_idx = 0;
+                _M_offset = 0;
                 _M_size = size;
+                _M_range = size;
                 return *this;
             }
 

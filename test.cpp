@@ -16,8 +16,8 @@ std::vector<int*> vpi;
 std::vector<int> numbers;
 
 void test_list(int n) {
-    // typedef bitmap_allocator<int> alloc_t;
-    typedef std::allocator<int> alloc_t;
+    typedef bitmap_allocator<int> alloc_t;
+    // typedef std::allocator<int> alloc_t;
     typedef std::list<int, alloc_t> list_t;
     list_t il;
 
@@ -29,8 +29,8 @@ void test_list(int n) {
 }
 
 void test_alloc(int n) {
-    // bitmap_allocator<int> ia;
-    std::allocator<int> ia;
+    bitmap_allocator<int> ia;
+    // std::allocator<int> ia;
 
     for (int i = 0; i < n-1; ++i) {
         vpi.push_back(ia.allocate(1));
