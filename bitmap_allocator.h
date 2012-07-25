@@ -8,10 +8,13 @@
 
 #define assert_lt(X,Y) if (!((X)<(Y))) { fprintf(stderr, "%d < %d FAILED\n", (X), (Y)); assert((X)<(Y)); }
 #define assert_gt(X,Y) if (!((X)>(Y))) { fprintf(stderr, "%d > %d FAILED\n", (X), (Y)); assert((X)>(Y)); }
-#define assert_le(X,Y) if (!((X)<=(Y))) { fprintf(stderr, "%d <= %d FAILED\n", (X), (Y)); assert((X)<=(Y)); }
-#define assert_eq(X,Y) if (!((X)==(Y))) { fprintf(stderr, "%d == %d FAILED\n", (X), (Y)); assert((X)==(Y)); }
-#define assert_ne(X,Y) if (!((X)!=(Y))) { fprintf(stderr, "%d != %d FAILED\n", (X), (Y)); assert((X)!=(Y)); }
+// #define assert_le(X,Y) if (!((X)<=(Y))) { fprintf(stderr, "%d <= %d FAILED\n", (X), (Y)); assert((X)<=(Y)); }
+// #define assert_eq(X,Y) if (!((X)==(Y))) { fprintf(stderr, "%d == %d FAILED\n", (X), (Y)); assert((X)==(Y)); }
+// #define assert_ne(X,Y) if (!((X)!=(Y))) { fprintf(stderr, "%d != %d FAILED\n", (X), (Y)); assert((X)!=(Y)); }
 // #define DPRINTF(ARGS...) fprintf(stderr, ARGS);
+// #define assert_lt(X,Y)
+// #define assert_gt(X,Y)
+
 #define DPRINTF(ARGS...)
 
 namespace __gnu_cxx {
@@ -104,9 +107,16 @@ namespace __gnu_cxx {
                             const size_t parent = (idx-1) / 2;
                             left  = parent * 2 + 1;
                             right = parent * 2 + 2;
-                            if (get_bit_at(pseg, left) == 0 || get_bit_at(pseg, right) == 0) {
-                                // Stop setting bits.
-                                break;
+                            if (idx == left) {
+                                if (get_bit_at(pseg, right) == 0) {
+                                    // Stop setting bits.
+                                    break;
+                                }
+                            } else {
+                                if (get_bit_at(pseg, left) == 0) {
+                                    // Stop setting bits.
+                                    break;
+                                }
                             }
                             // Set bit at 'parent' to indicate that
                             // everything under the tree rooted at
@@ -119,30 +129,43 @@ namespace __gnu_cxx {
                     }
                 }
 		assert(false);
+                return NULL;
             }
 
 	    /* Deallocates an object allocated via this
-	     * memory_chunk<SIZE>. Throws std::bad_alloc() if passed
-	     * an pointer that this allocator did not allocate.
+	     * memory_chunk<SIZE>.
 	     *
 	     */
             void deallocate_block(char *ptr) {
-		if (!this->has_this_block(ptr)) {
-		    throw std::bad_alloc("Invalid deallocation");
-		}
+		assert(this->has_this_block(ptr));
+                assert((ptr - mem()) % SIZE == 0);
 
-		// TODO: Fill in.
-		size_t idx = (ptr - mem()) / SIZE;
-		assert_lt(idx, _M_size - 1);
-		idx += (_M_size - 1);
+                size_t idx = (ptr - mem()) / SIZE;
+                size_t *pseg = reinterpret_cast<size_t*>(seg_tree());
 
+		assert_lt(idx, _M_size);
+                idx += (_M_size - 1);
+                set_bit_at(pseg, idx, 0);
+
+                // Since we freed a child, all parent nodes above this
+                // node on the path from the root to this node should
+                // be reset to 0 to indicate that there is a free node
+                // below this node.
+                while (idx != 0) {
+                    const size_t parent = (idx-1) / 2;
+                    if (get_bit_at(pseg, parent) == 0) {
+                        break;
+                    }
+                    set_bit_at(pseg, parent, 0);
+                    idx = parent;
+                }
             }
 
 	    /* Returns true if the memory blocks 'ptr' was allocated
 	     * using this memory_chunk<SIZE>.
 	     *
 	     */
-	    bool has_this_block(char *ptr) const {
+	    bool has_this_block(char *ptr) {
 		return ptr >= this->mem() && ptr < this->mem() + this->size() * SIZE;
 	    }
 
@@ -205,7 +228,9 @@ namespace __gnu_cxx {
                     if (mem) {
                         // Set this as the first block so that
                         // subsequent searches find it first.
-                        std::swap(_M_chunks[i], _M_chunks[0]);
+                        if (i != 0) {
+                            std::swap(_M_chunks[i], _M_chunks[0]);
+                        }
                         return mem;
                     } else {
 			DPRINTF("Block #%u does not have any free memory\n", i);
@@ -222,8 +247,7 @@ namespace __gnu_cxx {
                     num_blocks_in_chunk * SIZE /* For the actual objects */ +
                     sizeof(size_t) /* For the trailing magic */;
 
-		fprintf(stderr,
-			"num_blocks_in_chunk:  %10u\n"
+		DPRINTF("num_blocks_in_chunk:  %10u\n"
 			"seg_tree_bytes:       %10u\n"
 			"mem_size:             %10u\n"
 			"user_memory_size:     %10u\n"
@@ -259,7 +283,9 @@ namespace __gnu_cxx {
                         _M_chunks[i]->deallocate_block(ptr);
 
 			// Move to front.
-			std::swap(_M_chunks[0], _M_chunks[i]);
+                        if (i != 0) {
+                            std::swap(_M_chunks[0], _M_chunks[i]);
+                        }
 			return;
                     }
                 }
@@ -277,12 +303,36 @@ namespace __gnu_cxx {
         static alloc_impl<sizeof(T)> impl;
 
     public:
-	T* allocate(size_t nobjs) {
+        typedef size_t     size_type;
+        typedef ptrdiff_t  difference_type;
+        typedef T*       pointer;
+        typedef const T* const_pointer;
+        typedef T&       reference;
+        typedef const T& const_reference;
+        typedef T        value_type;
+
+        template<typename T1>
+        struct rebind
+        { typedef bitmap_allocator<T1> other; };
+
+        void 
+        construct(pointer __p, const T& __val) 
+        { ::new((void *)__p) T(__val); }
+
+        void 
+        destroy(pointer __p) { __p->~T(); }
+
+        bitmap_allocator() throw() { }
+
+        template<typename T1>
+        bitmap_allocator(const bitmap_allocator<T1>&) throw() { }
+
+	T* allocate(size_t nobjs, const void* = 0) {
 	    return reinterpret_cast<T*>(this->impl.allocate(nobjs));
 	}
 
-	void deallocate(T *ptr) {
-	    this->deallocate(reinterpret_cast<char*>(ptr));
+	void deallocate(T *ptr, size_t n) {
+	    this->impl.deallocate(reinterpret_cast<char*>(ptr), n);
 	}
     };
 
