@@ -359,10 +359,22 @@ namespace __gnu_cxx {
         void 
         destroy(pointer __p) { __p->~T(); }
 
-        bitmap_allocator() throw() { }
+	bitmap_allocator() throw() { }
+
+	bitmap_allocator(const bitmap_allocator&) throw() { }
 
         template<typename T1>
         bitmap_allocator(const bitmap_allocator<T1>&) throw() { }
+
+	pointer
+	address(reference __x) const { return std::__addressof(__x); }
+	
+	const_pointer
+	address(const_reference __x) const { return std::__addressof(__x); }
+
+	size_type
+	max_size() const throw() 
+	{ return size_t(-1) / sizeof(T); }
 
 	T* allocate(size_t nobjs, const void* = 0) {
 	    return reinterpret_cast<T*>(this->impl.allocate(nobjs));
@@ -375,6 +387,16 @@ namespace __gnu_cxx {
 
     template <typename T>
     alloc_impl<sizeof(T)> bitmap_allocator<T>::impl;
+
+    template<typename T>
+    inline bool
+    operator==(const bitmap_allocator<T>&, const bitmap_allocator<T>&)
+    { return true; }
+  
+    template<typename T>
+    inline bool
+    operator!=(const bitmap_allocator<T>&, const bitmap_allocator<T>&)
+    { return false; }
 
 }
 
