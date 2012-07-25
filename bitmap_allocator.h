@@ -132,6 +132,10 @@ namespace __gnu_cxx {
 		}
 
 		// TODO: Fill in.
+		size_t idx = (ptr - mem()) / SIZE;
+		assert_lt(idx, _M_size - 1);
+		idx += (_M_size - 1);
+
             }
 
 	    /* Returns true if the memory blocks 'ptr' was allocated
