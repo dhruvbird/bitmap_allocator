@@ -94,6 +94,9 @@ namespace __gnu_cxx {
                     // There is nothing here.
                     return NULL;
                 } else {
+		    // Even if _M_idx == 0 and the bit at that
+		    // position is == 0 (i.e. the previous condition
+		    // failing), the assertion below _must_ succeed.
                     assert(get_bit_at(pseg, _M_idx) == 0);
                 }
 
