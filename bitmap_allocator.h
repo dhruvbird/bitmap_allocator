@@ -349,11 +349,11 @@ namespace __gnu_cxx {
     public:
         typedef size_t     size_type;
         typedef ptrdiff_t  difference_type;
-        typedef T*       pointer;
-        typedef const T* const_pointer;
-        typedef T&       reference;
-        typedef const T& const_reference;
-        typedef T        value_type;
+        typedef T*         pointer;
+        typedef const T*   const_pointer;
+        typedef T&         reference;
+        typedef const T&   const_reference;
+        typedef T          value_type;
 
         template<typename T1>
         struct rebind
