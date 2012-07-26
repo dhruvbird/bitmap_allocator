@@ -6,6 +6,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <new>
+
 #if !defined NDEBUG
 #define assert_lt(X,Y) if (!((X)<(Y))) { fprintf(stderr, "%d < %d FAILED\n", (X), (Y)); assert((X)<(Y)); }
 #define assert_gt(X,Y) if (!((X)>(Y))) { fprintf(stderr, "%d > %d FAILED\n", (X), (Y)); assert((X)>(Y)); }
@@ -187,6 +189,11 @@ namespace __gnu_cxx {
                     DPRINTF("foo3\n");
 
                     const size_t parent = (idx-1) / 2;
+		    // We prematurely stop if any of the bits we want
+		    // to reset is already reset(0). This is because
+		    // all bits from the root to this node will
+		    // already be reset, and hence we need not bother
+		    // reseting them again.
                     if (get_bit_at(pseg, parent) == 0) {
                         break;
                     }
@@ -256,7 +263,7 @@ namespace __gnu_cxx {
             char* allocate(size_t n) {
 		DPRINTF("alloc_impl<%u>::allocate(%u)\n", SIZE, n);
                 if (n != 1) {
-                    return reinterpret_cast<char*>(malloc(SIZE * n));
+                    return reinterpret_cast<char*>(operator new(SIZE * n));
                 }
 
                 for (size_t i = 0; i < _M_num_chunks; ++i) {
@@ -311,7 +318,7 @@ namespace __gnu_cxx {
 
             void deallocate(char *ptr, size_t n) {
                 if (n != 1) {
-                    free(ptr);
+                    operator delete(ptr);
                     return;
                 }
 
@@ -377,7 +384,11 @@ namespace __gnu_cxx {
 	{ return size_t(-1) / sizeof(T); }
 
 	T* allocate(size_t nobjs, const void* = 0) {
-	    return reinterpret_cast<T*>(this->impl.allocate(nobjs));
+	    T *ptr = reinterpret_cast<T*>(this->impl.allocate(nobjs));
+	    if (!ptr) {
+		std::__throw_bad_alloc();
+	    }
+	    return ptr;
 	}
 
 	void deallocate(T *ptr, size_t n) {
