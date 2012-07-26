@@ -1,4 +1,4 @@
-CXXFLAGS := $(FLAGS) -Wall -O2 -I . test.cpp
+CXXFLAGS := $(FLAGS) -Wall -O2 -I . -std=c++0x test.cpp
 
 all: ba_alloc ba_list eba_alloc eba_list sa_alloc sa_list
 

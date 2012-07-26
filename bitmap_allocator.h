@@ -1,4 +1,4 @@
-// -*- mode:C++;c-basic-offset:4 -*-
+// -*- mode:C++;c-basic-offset:4;indent-tabs-mode:nil -*-
 #if !defined BITMAP_ALLOCATOR_H
 #define BITMAP_ALLOCATOR_H
 
@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <type_traits>
 #include <new>
 
 #if !defined NDEBUG
@@ -357,6 +358,7 @@ namespace __gnu_cxx {
         typedef T&         reference;
         typedef const T&   const_reference;
         typedef T          value_type;
+        typedef std::true_type  propagate_on_container_move_assignment;
 
         template<typename T1>
         struct rebind
