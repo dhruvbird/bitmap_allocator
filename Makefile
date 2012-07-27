@@ -24,12 +24,12 @@ sa_list: bitmap_allocator.h test.cpp
 	$(CXX) $(CXXFLAGS) -DSALLOC -DTEST_LIST -o sa_list
 
 test: all
-	time ./ba_alloc
-	time ./ba_list
-	time ./eba_alloc
-	time ./eba_list
-	time ./sa_alloc
-	time ./sa_list
+	/usr/bin/time -v ./ba_alloc
+	/usr/bin/time -v ./ba_list
+	/usr/bin/time -v ./eba_alloc
+	/usr/bin/time -v ./eba_list
+	/usr/bin/time -v ./sa_alloc
+	/usr/bin/time -v ./sa_list
 
 clean:
 	rm -f ./ba_alloc ./ba_list ./eba_alloc ./eba_list ./sa_alloc ./sa_list
