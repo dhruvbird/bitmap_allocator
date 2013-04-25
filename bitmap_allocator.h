@@ -12,6 +12,7 @@
 #if !defined NDEBUG
 #define assert_lt(X,Y) if (!((X)<(Y))) { fprintf(stderr, "%d < %d FAILED\n", (X), (Y)); assert((X)<(Y)); }
 #define assert_gt(X,Y) if (!((X)>(Y))) { fprintf(stderr, "%d > %d FAILED\n", (X), (Y)); assert((X)>(Y)); }
+#define assert_ge(X,Y) if (!((X)>=(Y))) { fprintf(stderr, "%d >= %d FAILED\n", (X), (Y)); assert((X)>=(Y)); }
 #define assert_le(X,Y) if (!((X)<=(Y))) { fprintf(stderr, "%d <= %d FAILED\n", (X), (Y)); assert((X)<=(Y)); }
 #define assert_eq(X,Y) if (!((X)==(Y))) { fprintf(stderr, "%d == %d FAILED\n", (X), (Y)); assert((X)==(Y)); }
 #define assert_ne(X,Y) if (!((X)!=(Y))) { fprintf(stderr, "%d != %d FAILED\n", (X), (Y)); assert((X)!=(Y)); }
@@ -19,6 +20,7 @@
 #else
 #define assert_lt(X,Y)
 #define assert_gt(X,Y)
+#define assert_ge(X,Y)
 #define assert_eq(X,Y)
 #endif
 
@@ -28,7 +30,7 @@
 
 namespace __gnu_cxx {
     namespace {
-        bool get_bit_at(size_t *ptr, size_t index) {
+        inline bool get_bit_at(size_t *ptr, size_t index) {
             const size_t big_offset = index / (8 * sizeof(size_t));
             const size_t lil_offset = index % (8 * sizeof(size_t));
 	    // DPRINTF("index: %u, big_offset: %u, lil_offset: %u\n",
@@ -38,7 +40,7 @@ namespace __gnu_cxx {
             return *mem & (one << lil_offset);
         }
 
-        void set_bit_at(size_t *ptr, size_t index, bool value) {
+        inline void set_bit_at(size_t *ptr, size_t index, bool value) {
 	    DPRINTF("set_bit_at(%u) = %d\n", index, value);
             const size_t big_offset = index / (8 * sizeof(size_t));
             const size_t lil_offset = index % (8 * sizeof(size_t));
@@ -60,12 +62,29 @@ namespace __gnu_cxx {
 	 */
 	template <size_t SIZE>
         struct memory_chunk {
-            // _M_size stores the number of memory objects of size
-            // SIZE that this memory_chunk stores
-            size_t _M_size;
             size_t _M_top_magic;
+            // _M_size stores the number of memory objects of size
+            // SIZE that this memory_chunk stores.
+            size_t _M_size;
+            // The index of the cached pointer into the segment tree
+            // array (representation). The permissible range for
+            // _M_idx is [0 .. _M_size*2 - 2]. When ALL the memory
+            // spaces ara available OR when NO memory spaces are
+            // available, _M_idx holds the value 0.
             size_t _M_idx;
+            // The # of free (available) memory spaces. _M_free ==
+            // _M_size to start with.
+            size_t _M_free;
+            // The offset into the last level of the segment tree
+            // tracking the beginning of the first leaf node under the
+            // subtree rooted at the node at segment tree index
+            // _M_idx.
             size_t _M_offset;
+            // The # of leaf nodes in the subtree rooted at the
+            // subtree rooted at segment tree index _M_idx. _M_range
+            // starts off with the same value as _M_size. If we are at
+            // a leaf node, _M_range is 1. If _M_range is 0, we are
+            // below a leaf (i.e. no possible node matches).
             size_t _M_range;
 
 	    // For the Segment Tree, a reset(0) bit means that the
@@ -89,15 +108,19 @@ namespace __gnu_cxx {
 
                 size_t *pseg = reinterpret_cast<size_t*>(seg_tree());
                 assert_lt(_M_idx, _M_size);
+                assert_ge(_M_idx, 0);
 		DPRINTF("get_bit_at(%u) = %d\n", _M_idx, get_bit_at(pseg, _M_idx));
 
-                if (_M_idx == 0 && get_bit_at(pseg, _M_idx) != 0) {
+                if (!has_free()) {
                     // There is nothing here.
                     return NULL;
                 } else {
-		    // Even if _M_idx == 0 and the bit at that
-		    // position is == 0 (i.e. the previous condition
-		    // failing), the assertion below _must_ succeed.
+                    // We MUST have the root node as unset to indicate
+                    // an available memory space.
+                    //
+                    // Remember that _M_idx is always a valid
+		    // index in the range [0 .. _M_size*2 - 2] and
+		    // never forrays into an invalid range.
                     assert(get_bit_at(pseg, _M_idx) == 0);
                 }
 
@@ -129,6 +152,9 @@ namespace __gnu_cxx {
                         set_bit_at(pseg, _M_idx, 1);
                         const size_t offset = _M_offset;
 
+                        // This loop updates the bit in the segment
+                        // tree at index 'parent'. Hence, stopping
+                        // when _M_idx is 0 is correct.
                         while (_M_idx != 0) {
                             DPRINTF("foo2\n");
 
@@ -163,6 +189,9 @@ namespace __gnu_cxx {
                             // no free blocks.
                             set_bit_at(pseg, parent, 1);
                         }
+                        --_M_free;
+                        assert_le(_M_free, _M_size);
+                        assert_ge(_M_free, 0);
                         return mem() + SIZE * offset;
                     }
                 }
@@ -176,7 +205,7 @@ namespace __gnu_cxx {
 	     */
             void deallocate_block(char *ptr) {
 		assert(this->has_this_block(ptr));
-                assert((ptr - mem()) % SIZE == 0);
+                assert_eq((ptr - mem()) % SIZE, 0);
 
                 size_t idx = (ptr - mem()) / SIZE;
                 size_t *pseg = reinterpret_cast<size_t*>(seg_tree());
@@ -184,6 +213,10 @@ namespace __gnu_cxx {
 		assert_lt(idx, _M_size);
                 idx += (_M_size - 1);
                 set_bit_at(pseg, idx, 0);
+                ++_M_free;
+
+                assert_le(_M_free, _M_size);
+                assert_ge(_M_free, 0);
 
                 // Since we freed a child, all parent nodes above this
                 // node on the path from the root to this node should
@@ -218,11 +251,16 @@ namespace __gnu_cxx {
                 return _M_size;
             }
 
+            bool has_free() const {
+                return _M_free > 0;
+            }
+
             memory_chunk<SIZE>& set_size(size_t size) {
                 _M_idx = 0;
                 _M_offset = 0;
                 _M_size = size;
                 _M_range = size;
+                _M_free = _M_size;
                 return *this;
             }
 
@@ -257,13 +295,23 @@ namespace __gnu_cxx {
 
 	template <size_t SIZE>
         struct alloc_impl {
+            // The # of valid chunks in
+            // _M_chunks. i.e.
+            // _M_chunks[_M_num_chunks - 1 .. _M_num_chunks)
+            // is valid.
             size_t _M_num_chunks;
-            memory_chunk<SIZE>* _M_chunks[42]; // For 4TiB worth of memory
+            // For ~4TiB worth of memory
+            memory_chunk<SIZE>* _M_chunks[42];
 
             alloc_impl()
                 : _M_num_chunks(0) {
             }
 
+            /* Expected complexity: O(1) per call. Degenerates to
+             * O(log n) if we allocate the last block in a segment
+             * tree, and then deallocate it immediately, and keep
+             * doing this in a cycle. However, this is improbable.
+             */
             char* allocate(size_t n) {
 		DPRINTF("alloc_impl<%u>::allocate(%u)\n", SIZE, n);
                 if (n != 1) {
@@ -320,6 +368,8 @@ namespace __gnu_cxx {
                 return allocate(n);
             }
 
+            /* Expected complexity: O(1) per call
+             */
             void deallocate(char *ptr, size_t n) {
                 if (n != 1) {
                     operator delete(ptr);
@@ -334,6 +384,11 @@ namespace __gnu_cxx {
                         if (i != 0) {
                             std::swap(_M_chunks[0], _M_chunks[i]);
                         }
+
+                        /* TODO: Remove empty chunks, but only if
+                         * there is more than one empty chunk
+                         * remaining.
+                         */
 			return;
                     }
                 }
@@ -348,6 +403,10 @@ namespace __gnu_cxx {
 
     template <typename T>
     class bitmap_allocator {
+        // Design choice: bitmap_allocator<int> and
+        // bitmap_allocator<float> do NOT share the same memory space
+        // even if sizeof(int) == sizeof(float). This is because they
+        // are different types, which may have unrelated lifespans.
         static alloc_impl<sizeof(T)> impl;
 
     public:
@@ -372,6 +431,8 @@ namespace __gnu_cxx {
         destroy(pointer __p) { __p->~T(); }
 
 	bitmap_allocator() throw() { }
+
+        ~bitmap_allocator() throw() { }
 
 	bitmap_allocator(const bitmap_allocator&) throw() { }
 
@@ -414,6 +475,15 @@ namespace __gnu_cxx {
     operator!=(const bitmap_allocator<T>&, const bitmap_allocator<T>&)
     { return false; }
 
+    template<typename T1, typename T2>
+    inline bool
+    operator==(const bitmap_allocator<T1>&, const bitmap_allocator<T2>&)
+    { return false; }
+
+    template<typename T1, typename T2>
+    inline bool
+    operator!=(const bitmap_allocator<T1>&, const bitmap_allocator<T2>&)
+    { return true; }
 }
 
 #endif // BITMAP_ALLOCATOR_H
