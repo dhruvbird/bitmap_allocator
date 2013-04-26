@@ -251,6 +251,10 @@ namespace __gnu_cxx {
                 return _M_size;
             }
 
+            size_t empty() const {
+                return _M_free == _M_size;
+            }
+
             bool has_free() const {
                 return _M_free > 0;
             }
@@ -262,6 +266,12 @@ namespace __gnu_cxx {
                 _M_range = size;
                 _M_free = _M_size;
                 return *this;
+            }
+
+            void invalidate() {
+                assert(this->empty());
+                _M_size = 0;
+                _M_free = 0;
             }
 
             memory_chunk<SIZE>& set_top_magic(size_t magic) {
@@ -300,7 +310,7 @@ namespace __gnu_cxx {
             // _M_chunks[_M_num_chunks - 1 .. _M_num_chunks)
             // is valid.
             size_t _M_num_chunks;
-            // For ~4TiB worth of memory
+            // For ~64TiB worth of memory since we start with 16 (1 << 4).
             memory_chunk<SIZE>* _M_chunks[42];
 
             alloc_impl()
@@ -336,7 +346,8 @@ namespace __gnu_cxx {
                 // No free block was found. Allocate a new chunk and
                 // restart.
                 const size_t one = 1L;
-                const size_t num_blocks_in_chunk = (one << (_M_num_chunks)) * (8 * sizeof(size_t) / 2);
+                const size_t objects_requested = one << (_M_num_chunks + 4); /* At least 16 objects */
+                const size_t num_blocks_in_chunk = objects_requested * (8 * sizeof(size_t) / 2);
 		const size_t seg_tree_bytes = (num_blocks_in_chunk * 2) / 8;
                 const size_t mem_size = sizeof(memory_chunk<SIZE>) /* For the header */ +
 		    seg_tree_bytes /* For the Segment Tree */ +
@@ -380,16 +391,39 @@ namespace __gnu_cxx {
                     if (_M_chunks[i]->has_this_block(ptr)) {
                         _M_chunks[i]->deallocate_block(ptr);
 
-			// Move to front.
+                        // _M_chunks[1] should contain the previous
+			// value of _M_chunks[0] so that we can
+			// quickly [in O(1)] determine if there is
+			// another free memory chunk available or not.
                         if (i != 0) {
-                            std::swap(_M_chunks[0], _M_chunks[i]);
+                            // We need to swap. Check if we can move 0 -> 1.
+                            if (_M_num_chunks > 1) {
+                                std::swap(_M_chunks[0], _M_chunks[1]);
+                            }
+
+                            if (i > 1) {
+                                // Move to front only if i > 1 since
+                                // if i == 1, we have already
+                                // performed the swap above.
+                                std::swap(_M_chunks[0], _M_chunks[i]);
+                            }
                         }
 
-                        /* TODO: Remove empty chunks, but only if
-                         * there is more than one empty chunk
-                         * remaining.
-                         */
-			return;
+                        // Remove empty chunks, but only if there is
+                        // more than one empty chunk remaining.
+                        //
+                        if (_M_num_chunks > 1 && _M_chunks[0]->empty() &&
+                            _M_chunks[1]->has_free()) {
+                            std::swap(_M_chunks[1], _M_chunks[0]);
+                            std::swap(_M_chunks[1], _M_chunks[_M_num_chunks - 1]);
+
+                            // fprintf(stderr, "Freeing chunk with size: %d\n", _M_chunks[_M_num_chunks - 1]->size());
+                            // Free _M_chunks[_M_num_chunks - 1]
+                            _M_chunks[_M_num_chunks - 1]->invalidate();
+                            ::free(reinterpret_cast<void*>(_M_chunks[_M_num_chunks - 1]));
+                            --_M_num_chunks;
+                        }
+                        return;
                     }
                 }
 
