@@ -3,11 +3,11 @@
 #define BITMAP_ALLOCATOR_H
 
 #include <assert.h>
-#include <stdlib.h>
-#include <string.h>
+#include <stdlib.h> // malloc(3)
+#include <string.h> // memset(3)
 
 #include <type_traits>
-#include <new>
+#include <new>      // operator/placement new
 
 #if !defined NDEBUG
 #define assert_lt(X,Y) if (!((X)<(Y))) { fprintf(stderr, "%d < %d FAILED\n", (X), (Y)); assert((X)<(Y)); }
@@ -54,13 +54,20 @@ namespace __gnu_cxx {
             }
         }
 
-	enum { TOP_MAGIC = 482781718, BOT_MAGIC = 213827793 };
+	enum Magic { TOP_MAGIC = 482781718, BOT_MAGIC = 213827793 };
 
-	/* A memory_chunk<SIZE> is a chunk of memory for objects of
-	 * size 'SIZE'. The number of such objects that can be stored
-	 * in this memory_chunk<SIZE> is specified in the constructor.
-	 *
-	 */
+        /** @class  memory_chunk bitmap_allocator.h bitmap_allocator.h
+         *
+         *  @brief A memory_chunk<SIZE> is a chunk of memory for
+	 *  objects of size 'SIZE'. The number of such objects that
+	 *  can be stored in this memory_chunk<SIZE> is specified by
+	 *  calling the function set_size(), which actually initializes this structure.
+         *
+         *  @detail Calling other members before calling set_size() is
+         *  an error, and might not be caught since this class is
+         *  placed into-preallocated memory rather than being
+         *  allocated using new.
+         */
 	template <size_t SIZE>
         struct memory_chunk {
             size_t _M_top_magic;
@@ -93,12 +100,19 @@ namespace __gnu_cxx {
 	    // is allocated.
             size_t _M_seg_tree[0];
 
-	    /* Allocates a single block of size SIZE. Returns
-	     * NULL if no free block exists in the current
-	     * memory_chunk.
+	    /** @brief Allocates a single block of size SIZE. Returns
+	     *  NULL if no free block exists in the current
+	     *  memory_chunk.
 	     *
-	     */
-            char *allocate_block(/* hint */) {
+             *  @param hint Allocate memory near the pointer with
+             *  address 'hint'. This is currently unused.
+             *
+             *  @return NULL if no memory could be allocated or a
+             *  pointer pointing to the allocated block of memory of
+             *  size 'SIZE'.
+             *
+             */
+            char *allocate_block(const char *hint = NULL) {
 		// DPRINTF("memory_chunk<%u>::allocate_block()\n", SIZE);
 		DPRINTF("_M_size: %u\n", _M_size);
 
@@ -200,10 +214,14 @@ namespace __gnu_cxx {
                 return NULL;
             }
 
-	    /* Deallocates an object allocated via this
-	     * memory_chunk<SIZE>.
+
+	    /** @brief Deallocates an object allocated via this
+	     *  memory_chunk<SIZE>.
 	     *
-	     */
+             *  @param ptr The pointer pointing to a single object
+             *  worth of memory to be deallocated.
+             *
+             */
             void deallocate_block(char *ptr) {
 		assert(this->has_this_block(ptr));
                 assert_eq((ptr - mem()) % SIZE, 0);
@@ -240,22 +258,37 @@ namespace __gnu_cxx {
                 }
             }
 
-	    /* Returns true if the memory blocks 'ptr' was allocated
-	     * using this memory_chunk<SIZE>.
+	    /** @brief Check if 'ptr' is owned by this memory owner.
+             *
+             *  @param ptr The pointer to check
+             *
+             *  @return true if the memory block 'ptr' was allocated
+	     *  using this memory_chunk<SIZE>.
 	     *
 	     */
 	    bool has_this_block(char *ptr) {
 		return ptr >= this->mem() && ptr < this->mem() + this->size() * SIZE;
 	    }
 
+            /** @brief Returns the size (capacity) of the
+             *  allocator. i.e. how many object it can potentially
+             *  hold.
+             */
             size_t size() const {
                 return _M_size;
             }
 
-            size_t empty() const {
+            /** @brief Returns true if all memory spaced owned by this
+             *  allocator are available for use, and false otherwise.
+             */
+            bool empty() const {
                 return _M_free == _M_size;
             }
 
+            /** @brief Returns true if some (at least one) memory
+             *  spaced owned by this allocator is available for use,
+             *  and false otherwise.
+             */
             bool has_free() const {
                 return _M_free > 0;
             }
@@ -304,14 +337,23 @@ namespace __gnu_cxx {
             }
 	};
 
+        /** @class  alloc_impl bitmap_allocator.h bitmap_allocator.h
+         *
+         *  @brief The bitmap allocator implementation class.
+         *
+         *  @detail Implements the allocation and deallocation routines.
+         *
+         */
 	template <size_t SIZE>
         struct alloc_impl {
-            // The # of valid chunks in
-            // _M_chunks. i.e.
+            // The # of valid chunks in _M_chunks.
+            //
             // _M_chunks[_M_num_chunks - 1 .. _M_num_chunks)
             // is valid.
             size_t _M_num_chunks;
-            // For ~64TiB worth of memory since we start with 16 (1 << 4).
+            // For ~64TiB worth of memory on a 32-bit machine
+            // (impossible in practice) since we start with 16 objects
+            // in the first chunk.
             memory_chunk<SIZE>* _M_chunks[42];
 
             alloc_impl()
@@ -328,6 +370,8 @@ namespace __gnu_cxx {
                 if (n != 1) {
                     return reinterpret_cast<char*>(operator new(SIZE * n));
                 }
+
+                // TODO: Verify top & bottom Magic values.
 
                 for (size_t i = 0; i < _M_num_chunks; ++i) {
 		    DPRINTF("calling _M_chunks[%u]::allocate_block()\n", i);
@@ -347,29 +391,38 @@ namespace __gnu_cxx {
                 // No free block was found. Allocate a new chunk and
                 // restart.
                 const size_t one = 1L;
-                const size_t objects_requested = one << (_M_num_chunks + 4); /* At least 16 objects */
-                const size_t num_blocks_in_chunk = objects_requested * (8 * sizeof(size_t) / 2);
-		const size_t seg_tree_bytes = (num_blocks_in_chunk * 2) / 8;
+                // MUST be a power of 2.
+                const size_t objects_requested = one << _M_num_chunks;
+                // Rounds off objects_requested to a multiple of the #
+                // of bits in a size_t type.
+                const size_t objects_returned = objects_requested * (8 * sizeof(size_t) / 2);
+                // The # of bytes the segment tree representation will
+                // occupy.
+		const size_t seg_tree_bytes = (objects_returned * 2) / 8;
                 const size_t mem_size = sizeof(memory_chunk<SIZE>) /* For the header */ +
 		    seg_tree_bytes /* For the Segment Tree */ +
-                    num_blocks_in_chunk * SIZE /* For the actual objects */ +
+                    objects_returned * SIZE /* For the actual objects */ +
                     sizeof(size_t) /* For the trailing magic */;
 
-		DPRINTF("num_blocks_in_chunk:  %10u\n"
+		DPRINTF("objects_requested:    %10u\n"
+                        "objects_returned:     %10u\n"
 			"seg_tree_bytes:       %10u\n"
-			"mem_size:             %10u\n"
-			"user_memory_size:     %10u\n"
-			"sizeof(memory_chunk): %10u\n",
-			num_blocks_in_chunk, seg_tree_bytes, mem_size,
-			num_blocks_in_chunk * SIZE, sizeof(memory_chunk<SIZE>));
+			"user_memory_size:     %10u (%u * %u)\n"
+			"sizeof(memory_chunk): %10u\n"
+			"mem_size:             %10u\n",
+                        objects_requested, objects_returned,
+                        seg_tree_bytes,
+                        objects_returned * SIZE, objects_returned, SIZE,
+                        sizeof(memory_chunk<SIZE>),
+                        mem_size);
 
                 memory_chunk<SIZE> *pchunk = reinterpret_cast<memory_chunk<SIZE>*>(malloc(mem_size));
                 if (!pchunk) {
                     return NULL;
                 }
-                (*pchunk).set_size(num_blocks_in_chunk)
-                    .set_top_magic(TOP_MAGIC)
-                    .set_bot_magic(BOT_MAGIC);
+                (*pchunk).set_size(objects_returned)
+                    .set_top_magic(Magic::TOP_MAGIC)
+                    .set_bot_magic(Magic::BOT_MAGIC);
 
 		// Clear out the segment tree
 		memset(pchunk->seg_tree(), 0, seg_tree_bytes * 2);
@@ -387,6 +440,8 @@ namespace __gnu_cxx {
                     operator delete(ptr);
                     return;
                 }
+
+                // TODO: Verify top & bottom Magic values.
 
                 for (size_t i = 0; i < _M_num_chunks; ++i) {
                     if (_M_chunks[i]->has_this_block(ptr)) {
@@ -434,7 +489,7 @@ namespace __gnu_cxx {
             }
 
         };
-    }
+    } // end anonymous namespace
 
     template <typename T>
     class bitmap_allocator {
