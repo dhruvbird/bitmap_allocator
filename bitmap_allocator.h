@@ -19,6 +19,7 @@
 
 #else
 #define assert_lt(X,Y)
+#define assert_le(X,Y)
 #define assert_gt(X,Y)
 #define assert_ge(X,Y)
 #define assert_eq(X,Y)
