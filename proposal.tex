@@ -210,10 +210,23 @@ amortized cost/operation is $O(1)$ if we ignore degenerate cases. In
 \textit{expectation} though, this algorithm incurs a cost of $O(1)$
 per operation (i.e. \texttt{allocate/deallocate}).
 
+Every access in a tree that is full except for 1 empty leaf node will
+cost $\log{N}$. This is happens $\dfrac{1}{N}$ times. Similarly, for the 2
+subtrees with $\dfrac{N}{2}$ leaves each, we have a cost of $(\log{N}) - 1$.
+Summing, we get:
+
+Average Cost = $\dfrac{\log{N}}{N} + \dfrac{2((\log{N}) - 1)}{N} + \dfrac{4((\log{N}) - 2)}{N} + \ldots{} + \dfrac{N(1)}{N}$
+
+$= \dfrac{1}{N}\left((2 \log{N} - 2) + (4 \log{N} - 8) + (8 \log{N} - 24) + \ldots{} + \dfrac{5N}{16} + \dfrac{4N}{8} + \dfrac{3N}{4} + \dfrac{2N}{2} + N\right)$
+
+$= \dfrac{\log{N}}{N} + \dfrac{(\log{N}) - 1}{N/2} + \dfrac{(\log{N}) - 2}{N/4} + \ldots{} + \dfrac{5}{16} + \dfrac{4}{8} + \dfrac{3}{4} + \dfrac{2}{2} + 1$
+
+$= O(1)$
+
 The degenerate case arises when we allocate the \textit{last} free
 block in a segment tree and immediately deallocate it, and repeat this
 over and over again. This causes the algorithm to repeatedly reset and
-set $O(log n)$ bits from the root to the affected leaf node.
+set $O(\log{n})$ bits from the root to the affected leaf node.
 
 We notice that we need not update the cache location of our node in
 case of a \texttt{deallocate} operation since a \texttt{deallocate}
