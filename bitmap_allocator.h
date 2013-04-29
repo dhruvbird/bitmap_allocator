@@ -1,15 +1,22 @@
 // -*- mode:C++;c-basic-offset:4;indent-tabs-mode:nil -*-
-#if !defined BITMAP_ALLOCATOR_H
-#define BITMAP_ALLOCATOR_H
+#if !defined _BITMAP_ALLOCATOR_H
+#define _BITMAP_ALLOCATOR_H 1
 
 #include <assert.h>
 #include <stdlib.h> // malloc(3)
 #include <string.h> // memset(3)
+// #include <stdint.h>
 
+#if __cplusplus >= 201103L
 #include <type_traits>
+#endif
 #include <new>      // operator/placement new
 
+#include <ext/concurrence.h>
+#include <bits/move.h>
+
 #if !defined NDEBUG
+#include <stdio.h>
 #define assert_lt(X,Y) if (!((X)<(Y))) { fprintf(stderr, "%d < %d FAILED\n", (X), (Y)); assert((X)<(Y)); }
 #define assert_gt(X,Y) if (!((X)>(Y))) { fprintf(stderr, "%d > %d FAILED\n", (X), (Y)); assert((X)>(Y)); }
 #define assert_ge(X,Y) if (!((X)>=(Y))) { fprintf(stderr, "%d >= %d FAILED\n", (X), (Y)); assert((X)>=(Y)); }
@@ -30,7 +37,10 @@
 
 
 namespace __gnu_cxx {
-    namespace {
+    using std::size_t;
+    using std::ptrdiff_t;
+
+    namespace __detail {
         inline bool get_bit_at(size_t *ptr, size_t index) {
             const size_t big_offset = index / (8 * sizeof(size_t));
             const size_t lil_offset = index % (8 * sizeof(size_t));
@@ -54,7 +64,7 @@ namespace __gnu_cxx {
             }
         }
 
-	enum Magic { TOP_MAGIC = 482781718, BOT_MAGIC = 213827793 };
+	enum { TOP_MAGIC = 482781718, BOT_MAGIC = 213827793 };
 
         /** @class  memory_chunk bitmap_allocator.h bitmap_allocator.h
          *
@@ -112,7 +122,7 @@ namespace __gnu_cxx {
              *  size 'SIZE'.
              *
              */
-            char *allocate_block(const char *hint = NULL) {
+            char *allocate_block(const char *hint __attribute__((unused)) = NULL) {
 		// DPRINTF("memory_chunk<%u>::allocate_block()\n", SIZE);
 		DPRINTF("_M_size: %u\n", _M_size);
 
@@ -324,7 +334,7 @@ namespace __gnu_cxx {
             }
 
             size_t bot_magic() const {
-                const size_t *bot_magic_ptr = reinterpret_cast<size_t*>(&(this->mem()[SIZE * size()]));
+                const size_t *bot_magic_ptr = reinterpret_cast<const size_t*>(&(this->mem()[SIZE * size()]));
                 return *bot_magic_ptr;
             }
 
@@ -332,10 +342,40 @@ namespace __gnu_cxx {
                 return reinterpret_cast<char*>(&_M_seg_tree);
             }
 
+            const char* seg_tree() const {
+                return reinterpret_cast<const char*>(&_M_seg_tree);
+            }
+
             char* mem() {
                 return this->seg_tree() + this->size() * 2 / 8;
             }
+
+            const char* mem() const {
+                return this->seg_tree() + this->size() * 2 / 8;
+            }
 	};
+
+        /// Scoped lock idiom.
+        // Acquire the mutex here with a constructor call, then release with
+        // the destructor call in accordance with RAII style.
+        class __recursive_mutex_scoped_lock
+        {
+        public:
+            typedef __recursive_mutex __mutex_type;
+
+        private:
+            __mutex_type& _M_device;
+
+            __recursive_mutex_scoped_lock(const __scoped_lock&);
+            __recursive_mutex_scoped_lock& operator=(const __recursive_mutex_scoped_lock&);
+
+        public:
+            explicit __recursive_mutex_scoped_lock(__recursive_mutex& __name) : _M_device(__name)
+            { _M_device.lock(); }
+
+            ~__recursive_mutex_scoped_lock() throw()
+            { _M_device.unlock(); }
+        };
 
         /** @class  alloc_impl bitmap_allocator.h bitmap_allocator.h
          *
@@ -355,6 +395,12 @@ namespace __gnu_cxx {
             // (impossible in practice) since we start with 16 objects
             // in the first chunk.
             memory_chunk<SIZE>* _M_chunks[42];
+#if defined __GTHREADS
+            // We use a recursive mutex since allocate(n) calls itself
+            // at times. We could make allocate(n) iterative, but this
+            // is cleaner.
+            __recursive_mutex _M_mutex;
+#endif
 
             alloc_impl()
                 : _M_num_chunks(0) {
@@ -372,6 +418,11 @@ namespace __gnu_cxx {
                 }
 
                 // TODO: Verify top & bottom Magic values.
+
+#if defined __GTHREADS
+                // Take scoped lock.
+                __recursive_mutex_scoped_lock __impl_lock(_M_mutex);
+#endif
 
                 for (size_t i = 0; i < _M_num_chunks; ++i) {
 		    DPRINTF("calling _M_chunks[%u]::allocate_block()\n", i);
@@ -421,8 +472,8 @@ namespace __gnu_cxx {
                     return NULL;
                 }
                 (*pchunk).set_size(objects_returned)
-                    .set_top_magic(Magic::TOP_MAGIC)
-                    .set_bot_magic(Magic::BOT_MAGIC);
+                    .set_top_magic(TOP_MAGIC)
+                    .set_bot_magic(BOT_MAGIC);
 
 		// Clear out the segment tree
 		memset(pchunk->seg_tree(), 0, seg_tree_bytes * 2);
@@ -436,12 +487,21 @@ namespace __gnu_cxx {
             /* Expected complexity: O(1) per call
              */
             void deallocate(char *ptr, size_t n) {
+                if (ptr == NULL) {
+                    return;
+                }
+
                 if (n != 1) {
                     operator delete(ptr);
                     return;
                 }
 
                 // TODO: Verify top & bottom Magic values.
+
+#if defined __GTHREADS
+                // Take scoped lock.
+                __recursive_mutex_scoped_lock __impl_lock(_M_mutex);
+#endif
 
                 for (size_t i = 0; i < _M_num_chunks; ++i) {
                     if (_M_chunks[i]->has_this_block(ptr)) {
@@ -489,7 +549,9 @@ namespace __gnu_cxx {
             }
 
         };
-    } // end anonymous namespace
+    } // namespace __detail
+
+_GLIBCXX_BEGIN_NAMESPACE_VERSION
 
     template <typename T>
     class bitmap_allocator {
@@ -497,7 +559,7 @@ namespace __gnu_cxx {
         // bitmap_allocator<float> do NOT share the same memory space
         // even if sizeof(int) == sizeof(float). This is because they
         // are different types, which may have unrelated lifespans.
-        static alloc_impl<sizeof(T)> impl;
+        static __detail::alloc_impl<sizeof(T)> impl;
 
     public:
         typedef size_t     size_type;
@@ -507,18 +569,34 @@ namespace __gnu_cxx {
         typedef T&         reference;
         typedef const T&   const_reference;
         typedef T          value_type;
-        typedef std::true_type  propagate_on_container_move_assignment;
+#if __cplusplus >= 201103L
+      // _GLIBCXX_RESOLVE_LIB_DEFECTS
+      // 2103. propagate_on_container_move_assignment
+      typedef std::true_type propagate_on_container_move_assignment;
+#endif
 
         template<typename T1>
         struct rebind
         { typedef bitmap_allocator<T1> other; };
 
+#if __cplusplus >= 201103L
+      template<typename _Up, typename... _Args>
+        void
+        construct(_Up* __p, _Args&&... __args)
+	{ ::new((void *)__p) _Up(std::forward<_Args>(__args)...); }
+
+      template<typename _Up>
         void 
-        construct(pointer __p, const T& __val) 
+        destroy(_Up* __p)
+        { __p->~_Up(); }
+#else
+        void 
+        construct(pointer __p, const_reference __val) 
         { ::new((void *)__p) T(__val); }
 
         void 
         destroy(pointer __p) { __p->~T(); }
+#endif
 
 	bitmap_allocator() throw() { }
 
@@ -553,27 +631,19 @@ namespace __gnu_cxx {
     };
 
     template <typename T>
-    alloc_impl<sizeof(T)> bitmap_allocator<T>::impl;
-
-    template<typename T>
-    inline bool
-    operator==(const bitmap_allocator<T>&, const bitmap_allocator<T>&)
-    { return true; }
-  
-    template<typename T>
-    inline bool
-    operator!=(const bitmap_allocator<T>&, const bitmap_allocator<T>&)
-    { return false; }
+    __detail::alloc_impl<sizeof(T)> bitmap_allocator<T>::impl;
 
     template<typename T1, typename T2>
     inline bool
-    operator==(const bitmap_allocator<T1>&, const bitmap_allocator<T2>&)
-    { return false; }
+    operator==(const bitmap_allocator<T1>&, const bitmap_allocator<T2>&) throw()
+    { return true; }
 
     template<typename T1, typename T2>
     inline bool
-    operator!=(const bitmap_allocator<T1>&, const bitmap_allocator<T2>&)
-    { return true; }
-}
+    operator!=(const bitmap_allocator<T1>&, const bitmap_allocator<T2>&) throw()
+    { return false; }
+
+_GLIBCXX_END_NAMESPACE_VERSION
+} // namespace __gnu_cxx
 
 #endif // BITMAP_ALLOCATOR_H

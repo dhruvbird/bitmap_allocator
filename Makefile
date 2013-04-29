@@ -1,4 +1,4 @@
-CXXFLAGS := $(FLAGS) -Wall -O2 -I . -I /usr/include/i386-linux-gnu/ -std=c++0x test.cpp 
+CXXFLAGS := $(FLAGS) -Wall -O2 -I . -I /usr/include/i386-linux-gnu/ -std=c++0x test.cpp
 ifndef CXX
 	CXX := g++
 endif
